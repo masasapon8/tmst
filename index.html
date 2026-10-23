@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TMST 日程調整</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { --g:#06c755; --bg:#f5f6f7; --card:#fff; --tx:#222; --sub:#777; --line:#e5e5e5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--tx); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif; font-size:15px; }
+  header { background:#fff; padding:16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--sub); font-size:13px; }
+  main { padding:12px 12px 110px; }
+  .card { background:var(--card); border-radius:12px; padding:12px; margin-bottom:10px; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .date { flex:1; font-weight:600; }
+  .btns { display:flex; gap:6px; }
+  .btns button { width:44px; height:40px; border-radius:10px; border:1px solid var(--line); background:#fff; font-size:18px; color:#999; }
+  .btns button.on.o { background:var(--g); color:#fff; border-color:var(--g); }
+  .btns button.on.t { background:#f5a623; color:#fff; border-color:#f5a623; }
+  .btns button.on.x { background:#888; color:#fff; border-color:#888; }
+  .count { margin-top:8px; font-size:13px; color:var(--sub); cursor:pointer; }
+  .names { margin-top:6px; font-size:13px; line-height:1.6; display:none; }
+  .names.open { display:block; }
+  label { font-size:13px; color:var(--sub); display:block; margin-bottom:4px; }
+  input, textarea { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:15px; font-family:inherit; }
+  footer { position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  footer button { width:100%; height:48px; border:none; border-radius:10px; background:var(--g); color:#fff; font-size:16px; font-weight:700; }
+  footer button:disabled { opacity:.5; }
+  .toast { position:fixed; left:50%; top:20px; transform:translateX(-50%); background:#333; color:#fff; padding:10px 16px; border-radius:20px; font-size:14px; display:none; z-index:9; }
+  .msg { padding:40px 16px; text-align:center; color:var(--sub); }
+  .badge { display:inline-block; background:var(--g); color:#fff; border-radius:6px; padding:2px 8px; font-size:12px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="msg">読み込み中…</div></div>
+<div class="toast" id="toast"></div>
+<script>
+// ===== 設定（ここだけ書き換え） =====
+const LIFF_ID = 'ここにLIFF ID';
+const API_URL = 'ここにApps ScriptのウェブアプリURL（/exec）';
+// ====================================
+
+let pollId = '', data = null, answers = {};
+const app = document.getElementById('app');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function call(action, extra) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    body: JSON.stringify(Object.assign({ action, p: pollId, idToken: liff.getIDToken() }, extra || {}))
+  });
+  return res.json();
+}
+
+function toast(t) {
+  const el = document.getElementById('toast');
+  el.textContent = t; el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 1800);
+}
+
+function render() {
+  const d = data, car = d.type === 'car';
+  const opts = car ? [['○', 'o'], ['×', 'x']] : [['○', 'o'], ['△', 't'], ['×', 'x']];
+  let h = '<header><h1>' + esc(d.title) + '</h1><div class="sub">' + esc(d.me.name) + 'さん｜回答締切 ' + esc(d.deadline) +
+    '｜回答 ' + d.respondents + '人</div>' + (d.confirmed ? '<div class="badge">開催決定：' + esc(d.confirmed) + '</div>' : '') + '</header><main>';
+
+  if (car) {
+    h += '<div class="card"><label>乗車定員（運転手を含む人数）</label><input id="seats" type="number" inputmode="numeric" min="1" max="10" value="' + esc(d.me.seats) + '" placeholder="例：5"></div>';
+  }
+  d.dates.forEach((r, i) => {
+    h += '<div class="card"><div class="row"><div class="date">' + esc(r.label) + '</div><div class="btns">' +
+      opts.map(([v, k]) => '<button class="' + k + (answers[r.d] === v ? ' on' : '') + '" data-d="' + r.d + '" data-v="' + v + '">' + v + '</button>').join('') +
+      '</div></div><div class="count" data-i="' + i + '">○' + r.o.length + (car ? '' : ' △' + r.t.length) + ' ×' + r.x.length +
+      (car ? '｜定員計' + r.seats + '人' : '') + '　▼名前を見る</div><div class="names" id="n' + i + '">' +
+      (r.o.length ? '○ ' + r.o.map(esc).join('、') + '<br>' : '') +
+      (r.t.length ? '△ ' + r.t.map(esc).join('、') + '<br>' : '') +
+      (r.x.length ? '× ' + r.x.map(esc).join('、') : '') + (r.o.length + r.t.length + r.x.length ? '' : 'まだ回答はありません') +
+      '</div></div>';
+  });
+  h += '<div class="card"><label>コメント（任意）</label><textarea id="comment" rows="2" maxlength="200">' + esc(d.me.comment) + '</textarea></div>';
+  if (d.comments.length) h += '<div class="card"><label>みんなのコメント</label><div style="font-size:13px;line-height:1.6">' + d.comments.map(esc).join('<br>') + '</div></div>';
+  h += '</main><footer><button id="save">回答を保存する</button></footer>';
+  app.innerHTML = h;
+
+  app.querySelectorAll('.btns button').forEach(b => b.onclick = () => {
+    answers[b.dataset.d] = b.dataset.v;
+    b.parentNode.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+  app.querySelectorAll('.count').forEach(c => c.onclick = () => document.getElementById('n' + c.dataset.i).classList.toggle('open'));
+  document.getElementById('save').onclick = save;
+}
+
+async function save() {
+  const btn = document.getElementById('save');
+  const missing = data.dates.filter(r => !answers[r.d]).length;
+  if (missing && !confirm('未入力の日が' + missing + '日あります。このまま保存しますか？')) return;
+  const extra = { answers, comment: document.getElementById('comment').value };
+  if (data.type === 'car') extra.seats = document.getElementById('seats').value;
+  btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const r = await call('answer', extra);
+    if (!r.ok) throw new Error(r.error);
+    data = r.data; render(); toast('保存しました');
+    window.scrollTo(0, 0);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '回答を保存する';
+    alert(e.message === 'auth' ? 'ログインの有効期限が切れました。もう一度開き直してください。' : '保存に失敗しました（' + e.message + '）');
+  }
+}
+
+(async () => {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    pollId = new URLSearchParams(location.search).get('p') || '';
+    if (!pollId) { app.innerHTML = '<div class="msg">リンクが正しくありません。</div>'; return; }
+    const r = await call('get');
+    if (!r.ok) {
+      app.innerHTML = '<div class="msg">' + (r.error === 'closed' ? 'この日程調整は終了しています。' : '読み込みに失敗しました（' + esc(r.error) + '）') + '</div>';
+      return;
+    }
+    data = r.data;
+    answers = Object.assign({}, data.me.a);
+    render();
+  } catch (e) {
+    app.innerHTML = '<div class="msg">読み込みに失敗しました。<br>' + esc(e.message || e) + '</div>';
+  }
+})();
+</script>
+</body>
+</html>
