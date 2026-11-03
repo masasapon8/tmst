@@ -31,6 +31,10 @@
   footer button:disabled { opacity:.5; }
   .toast { position:fixed; left:50%; top:20px; transform:translateX(-50%); background:#333; color:#fff; padding:10px 16px; border-radius:20px; font-size:14px; display:none; z-index:9; }
   .msg { padding:40px 16px; text-align:center; color:var(--sub); }
+  select { width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:15px; background:#fff; margin-bottom:10px; }
+  .car h3 { font-size:16px; margin:0 0 4px; }
+  .note { font-size:13px; background:#f0faf3; border-radius:6px; padding:6px 8px; margin:6px 0; }
+  .pre { white-space:pre-wrap; font-size:14px; line-height:1.6; }
   .badge { display:inline-block; background:var(--g); color:#fff; border-radius:6px; padding:2px 8px; font-size:12px; margin-top:6px; }
 </style>
 </head>
@@ -61,7 +65,41 @@ function toast(t) {
   setTimeout(() => el.style.display = 'none', 1800);
 }
 
+function renderRide() {
+  const d = data;
+  let h = '<header><h1>' + esc(d.title) + '</h1><div class="sub">' + esc(d.me.name) + 'さん｜開催 ' + esc(d.date) +
+    '｜希望締切 ' + esc(d.deadline) + '｜回答 ' + d.respondents + '人</div></header><main>';
+  if (d.published) h += '<div class="card"><label>配車決定</label><div class="pre">' + esc(d.table) + '</div></div>';
+  if (!d.cars.length) h += '<div class="card">車を出す人がまだ決まっていません。</div>';
+  if (d.isDriver) {
+    h += '<div class="card"><label>あなたは運転手です。集合場所・時間などを一言どうぞ（全員に表示されます）</label>' +
+      '<textarea id="driverNote" rows="2" maxlength="100" placeholder="例：8:00 錦糸町駅北口ロータリー">' + esc(d.me.a.driverNote || '') + '</textarea></div>';
+  } else if (d.cars.length) {
+    const opt = (sel, allowNone) => '<option value="">選んでください</option>' +
+      d.cars.map(c => '<option value="' + esc(c.key) + '"' + (sel === c.key ? ' selected' : '') + '>' + esc(c.name) + 'さんの車（同乗' + c.cap + '人まで）</option>').join('') +
+      '<option value="any"' + (sel === 'any' ? ' selected' : '') + '>どこでもOK</option>' +
+      (allowNone ? '<option value="none"' + (sel === 'none' ? ' selected' : '') + '>車に乗らない（自力で行く）</option>' : '');
+    h += '<div class="card"><label>第1希望</label><select id="first">' + opt(d.me.a.first, true) + '</select>' +
+      '<label>第2希望（任意）</label><select id="second">' + opt(d.me.a.second, false) + '</select></div>';
+  }
+  d.cars.forEach(c => {
+    h += '<div class="card car"><h3>' + esc(c.name) + 'さんの車</h3><div class="sub">定員' + (c.seats || '?') + '人（同乗' + c.cap + '人まで）</div>' +
+      (c.note ? '<div class="note">' + esc(c.note) + '</div>' : '') +
+      '<div class="count">第1希望 ' + c.first.length + '/' + c.cap + (c.first.length > c.cap ? '（定員オーバー）' : '') + '</div>' +
+      '<div class="names open">' + (c.first.length ? esc(c.first.join('、')) : '—') +
+      (c.second.length ? '<br><span class="sub">第2希望：' + esc(c.second.join('、')) + '</span>' : '') + '</div></div>';
+  });
+  if (d.any.length) h += '<div class="card"><label>どこでもOK</label>' + esc(d.any.join('、')) + '</div>';
+  if (d.none.length) h += '<div class="card"><label>車に乗らない</label>' + esc(d.none.join('、')) + '</div>';
+  h += '<div class="card"><label>コメント（任意）</label><textarea id="comment" rows="2" maxlength="200">' + esc(d.me.comment) + '</textarea></div>';
+  if (d.comments.length) h += '<div class="card"><label>みんなのコメント</label><div style="font-size:13px;line-height:1.6">' + d.comments.map(esc).join('<br>') + '</div></div>';
+  h += '</main><footer><button id="save">' + (d.isDriver ? '保存する' : '希望を保存する') + '</button></footer>';
+  app.innerHTML = h;
+  document.getElementById('save').onclick = save;
+}
+
 function render() {
+  if (data.type === 'ride') return renderRide();
   const d = data, car = d.type === 'car';
   const opts = car ? [['○', 'o'], ['×', 'x']] : [['○', 'o'], ['△', 't'], ['×', 'x']];
   let h = '<header><h1>' + esc(d.title) + '</h1><div class="sub">' + esc(d.me.name) + 'さん｜回答締切 ' + esc(d.deadline) +
@@ -95,10 +133,21 @@ function render() {
 
 async function save() {
   const btn = document.getElementById('save');
-  const missing = data.dates.filter(r => !answers[r.d]).length;
-  if (missing && !confirm('未入力の日が' + missing + '日あります。このまま保存しますか？')) return;
-  const extra = { answers, comment: document.getElementById('comment').value };
-  if (data.type === 'car') extra.seats = document.getElementById('seats').value;
+  let extra;
+  if (data.type === 'ride') {
+    extra = { comment: document.getElementById('comment').value };
+    if (data.isDriver) extra.driverNote = document.getElementById('driverNote').value;
+    else if (data.cars.length) {
+      extra.first = document.getElementById('first').value;
+      extra.second = document.getElementById('second').value;
+      if (!extra.first) { alert('第1希望を選んでください'); return; }
+    }
+  } else {
+    const missing = data.dates.filter(r => !answers[r.d]).length;
+    if (missing && !confirm('未入力の日が' + missing + '日あります。このまま保存しますか？')) return;
+    extra = { answers, comment: document.getElementById('comment').value };
+    if (data.type === 'car') extra.seats = document.getElementById('seats').value;
+  }
   btn.disabled = true; btn.textContent = '保存中…';
   try {
     const r = await call('answer', extra);
@@ -123,7 +172,7 @@ async function save() {
       return;
     }
     data = r.data;
-    answers = Object.assign({}, data.me.a);
+    answers = data.type === 'ride' ? {} : Object.assign({}, data.me.a);
     render();
   } catch (e) {
     app.innerHTML = '<div class="msg">読み込みに失敗しました。<br>' + esc(e.message || e) + '</div>';
